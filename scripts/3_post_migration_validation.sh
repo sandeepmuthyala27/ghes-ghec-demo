@@ -26,14 +26,19 @@ write_log() {
 # Helpers
 # ----------------------------
 is_json() { jq -e . >/dev/null 2>&1; }
-urlencode() { jq -rn --arg s "$1" '$s|@uri'; }
+
+urlencode() {
+  jq -rn --arg s "$1" '$s|@uri'
+}
 
 # ----------------------------
-# GHES pagination (UNLIMITED ✅)
+# GHES pagination - unlimited
 # ----------------------------
 get_ghes_branches_json() {
-  local org="$1" repo="$2"
-  local page=1 per_page=100
+  local org="$1"
+  local repo="$2"
+  local page=1
+  local per_page=100
   local all='[]'
 
   local enc_org enc_repo
@@ -50,6 +55,7 @@ get_ghes_branches_json() {
       "$url")"
 
     if ! echo "$resp" | is_json; then
+      write_log "❌ Invalid JSON response from GHES branches API for ${org}/${repo}"
       break
     fi
 
@@ -66,18 +72,24 @@ get_ghes_branches_json() {
 }
 
 # ----------------------------
-# GitHub pagination (FIXED ✅)
+# GitHub pagination
 # ----------------------------
 get_github_branches_json() {
-  local org="$1" repo="$2"
-  local page=1 per_page=100
+  local org="$1"
+  local repo="$2"
+  local page=1
+  local per_page=100
   local all='[]'
 
   while true; do
     local resp
-    resp="$(gh api "/repos/$org/$repo/branches?page=$page&per_page=$per_page" 2>/dev/null)" || break
+    resp="$(gh api "/repos/$org/$repo/branches?page=$page&per_page=$per_page" 2>/dev/null)" || {
+      write_log "❌ Failed to fetch GitHub branches for ${org}/${repo}"
+      break
+    }
 
     if ! echo "$resp" | is_json; then
+      write_log "❌ Invalid JSON response from GitHub branches API for ${org}/${repo}"
       break
     fi
 
@@ -97,9 +109,15 @@ get_github_branches_json() {
 # Commit comparison
 # ----------------------------
 get_commit_count_and_latest() {
-  local mode="$1" org="$2" repo="$3" branch="$4"
+  local mode="$1"
+  local org="$2"
+  local repo="$3"
+  local branch="$4"
 
-  local page=1 per_page=100 count=0 latest=""
+  local page=1
+  local per_page=100
+  local count=0
+  local latest=""
 
   local enc_branch
   enc_branch="$(urlencode "$branch")"
@@ -109,13 +127,16 @@ get_commit_count_and_latest() {
 
     if [[ "$mode" == "ghes" ]]; then
       resp="$(curl -sS \
+        -H "Accept: application/vnd.github+json" \
         -H "Authorization: token ${GH_SOURCE_PAT}" \
         "${GHES_API_URL}/repos/$(urlencode "$org")/$(urlencode "$repo")/commits?sha=$enc_branch&page=$page&per_page=$per_page")"
     else
       resp="$(gh api "/repos/$org/$repo/commits?sha=$enc_branch&page=$page&per_page=$per_page" 2>/dev/null)" || break
     fi
 
-    if ! echo "$resp" | is_json; then break; fi
+    if ! echo "$resp" | is_json; then
+      break
+    fi
 
     local batch_len
     batch_len="$(echo "$resp" | jq 'length')"
@@ -125,6 +146,7 @@ get_commit_count_and_latest() {
     fi
 
     count=$((count + batch_len))
+
     [[ "$batch_len" -lt "$per_page" ]] && break
     ((page++))
   done
@@ -141,7 +163,10 @@ validate_migration() {
   local github_org="$3"
   local github_repo="$4"
 
-  write_log "[$(date -u +%FT%TZ)] Validating: $ghes_org/$ghes_repo -> $github_org/$github_repo"
+  write_log ""
+  write_log "============================================================"
+  write_log "ℹ️  [$(date -u +%FT%TZ)] Validating: ${ghes_org}/${ghes_repo} -> ${github_org}/${github_repo}"
+  write_log "============================================================"
 
   local gh_branches ghes_branches
 
@@ -152,13 +177,20 @@ validate_migration() {
   mapfile -t ghes_array < <(echo "$ghes_branches" | jq -r '.[].name')
 
   # ----------------------------
-  # ✅ HASH-BASED branch compare
+  # Hash-based branch compare
   # ----------------------------
-  declare -A gh_map ghes_map
+  declare -A gh_map
+  declare -A ghes_map
+
   local b
 
-  for b in "${gh_array[@]}"; do gh_map["$b"]=1; done
-  for b in "${ghes_array[@]}"; do ghes_map["$b"]=1; done
+  for b in "${gh_array[@]}"; do
+    gh_map["$b"]=1
+  done
+
+  for b in "${ghes_array[@]}"; do
+    ghes_map["$b"]=1
+  done
 
   local missing_in_github=()
   local missing_in_ghes=()
@@ -171,17 +203,35 @@ validate_migration() {
     [[ -z "${ghes_map[$b]:-}" ]] && missing_in_ghes+=("$b")
   done
 
-  write_log "Branch Count GHES=${#ghes_array[@]} GitHub=${#gh_array[@]}"
+  # ----------------------------
+  # Branch count validation
+  # ----------------------------
+  if [[ ${#ghes_array[@]} -eq ${#gh_array[@]} ]]; then
+    write_log "✅ Branch Count MATCHED | GHES=${#ghes_array[@]} GitHub=${#gh_array[@]}"
+  else
+    write_log "❌ Branch Count NOT MATCHED | GHES=${#ghes_array[@]} GitHub=${#gh_array[@]}"
+  fi
 
-  [[ ${#missing_in_github[@]} -gt 0 ]] && \
-    write_log "Missing in GitHub: ${missing_in_github[*]}"
+  if [[ ${#missing_in_github[@]} -gt 0 ]]; then
+    write_log "⚠️  Missing in GitHub: ${missing_in_github[*]}"
+  else
+    write_log "✅ No branches missing in GitHub"
+  fi
 
-  [[ ${#missing_in_ghes[@]} -gt 0 ]] && \
-    write_log "Missing in GHES: ${missing_in_ghes[*]}"
+  if [[ ${#missing_in_ghes[@]} -gt 0 ]]; then
+    write_log "⚠️  Extra branches found in GitHub / Missing in GHES: ${missing_in_ghes[*]}"
+  else
+    write_log "✅ No extra branches found in GitHub"
+  fi
 
   # ----------------------------
   # Commit validation
   # ----------------------------
+  local branch
+  local gh_pair ghes_pair
+  local gh_count gh_sha
+  local ghes_count ghes_sha
+
   for branch in "${gh_array[@]}"; do
     [[ -z "${ghes_map[$branch]:-}" ]] && continue
 
@@ -194,11 +244,20 @@ validate_migration() {
     ghes_count="${ghes_pair%%|*}"
     ghes_sha="${ghes_pair#*|}"
 
-    write_log "Branch: $branch | Commits GHES=$ghes_count GitHub=$gh_count"
-    write_log "Branch: $branch | SHA GHES=$ghes_sha GitHub=$gh_sha"
+    if [[ "$gh_count" == "$ghes_count" ]]; then
+      write_log "✅ Branch: ${branch} | Commit Count MATCHED | GHES=${ghes_count} GitHub=${gh_count}"
+    else
+      write_log "❌ Branch: ${branch} | Commit Count NOT MATCHED | GHES=${ghes_count} GitHub=${gh_count}"
+    fi
+
+    if [[ "$ghes_sha" == "$gh_sha" && -n "$ghes_sha" ]]; then
+      write_log "✅ Branch: ${branch} | Latest SHA MATCHED | GHES=${ghes_sha} GitHub=${gh_sha}"
+    else
+      write_log "❌ Branch: ${branch} | Latest SHA NOT MATCHED | GHES=${ghes_sha} GitHub=${gh_sha}"
+    fi
   done
 
-  write_log "Validation complete: $github_org/$github_repo"
+  write_log "✅ Validation completed for: ${github_org}/${github_repo}"
 }
 
 # ----------------------------
@@ -207,10 +266,19 @@ validate_migration() {
 validate_from_csv() {
   local csv="repos.csv"
 
+  if [[ ! -f "$csv" ]]; then
+    write_log "❌ CSV file not found: $csv"
+    exit 1
+  fi
+
   tail -n +2 "$csv" | while IFS=',' read -r ghes_org ghes_repo _ _ github_org github_repo _; do
+    if [[ -z "${ghes_org:-}" || -z "${ghes_repo:-}" || -z "${github_org:-}" || -z "${github_repo:-}" ]]; then
+      write_log "⚠️  Skipping invalid CSV row"
+      continue
+    fi
+
     validate_migration "$ghes_org" "$ghes_repo" "$github_org" "$github_repo"
   done
 }
 
 validate_from_csv
-
