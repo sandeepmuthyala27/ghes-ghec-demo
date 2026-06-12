@@ -1,3 +1,2 @@
 ghes_org,ghes_repo,repo_url,repo_size_MB,github_org,github_repo,gh_repo_visibility,reviewer
-test,go,https://antgrutta-07mubd.ghe-test.com/test/go,410.68,my-org,go,public,sandeepmuthyala27
-test,LibreChat,https://antgrutta-07mubd.ghe-test.com/test/LibreChat,130.82,my-org,LibreChat,public,sandeepmuthyala27
+ghes-factory-demo,calotracker,https://antgrutta-07mubd.ghe-test.com/ghes-factory-demo/calotracker,410.68,my-org,calotracker-098,public,sandeepmuthyala27
