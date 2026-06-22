@@ -3,6 +3,10 @@ name: ghes-ghec-with-vars-approver-gate
 on:
   workflow_dispatch:
     inputs:
+      ENVIRONMENT_NAME:
+        description: "GitHub Environment name containing vars and secrets"
+        type: string
+        required: true
       runner:
         description: >
           Runner selector. Use ubuntu-latest for GitHub-hosted.
@@ -72,6 +76,7 @@ jobs:
     name: Stage 1 - Pre-migration validation
     if: ${{ inputs.run_pre_validation == 'true' }}
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
+    environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -231,6 +236,7 @@ jobs:
     name: Stage 2 - Migration (GHES → GitHub)
     environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
+    environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 360
     needs: [pre-migration-validation]
     if: ${{ always()
@@ -381,6 +387,7 @@ jobs:
   post-migration-validation:
     name: Stage 3 - Post-migration validation
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
+    environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 180
     needs: [migration]
     if: ${{ always()
@@ -550,6 +557,7 @@ jobs:
     name: Stage 4 - Vars Migration (GHES → GHEC)
     environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
+    environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 180
     needs: [post-migration-validation]
     if: ${{ always()
