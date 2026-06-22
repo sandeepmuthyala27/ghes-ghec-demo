@@ -234,7 +234,6 @@ jobs:
   # ------------------------------------------------------------
   migration:
     name: Stage 2 - Migration (GHES → GitHub)
-    environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
     environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 360
@@ -555,7 +554,6 @@ jobs:
   # ============================================================
   vars-migration:
     name: Stage 4 - Vars Migration (GHES → GHEC)
-    environment: migration-approval
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || fromJson(inputs.runner) }}
     environment: ${{ inputs.ENVIRONMENT_NAME }}
     timeout-minutes: 180
