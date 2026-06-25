@@ -173,13 +173,13 @@ validate_migration() {
   gh_branches="$(get_github_branches_json "$github_org" "$github_repo")"
   ghes_branches="$(get_ghes_branches_json "$ghes_org" "$ghes_repo")"
 
-  # ✅ LIMIT to first 10 branches
-  mapfile -t gh_array < <(echo "$gh_branches" | jq -r '.[].name' | head -n 10)
+  # ✅ FULL arrays (no limit here)
+  mapfile -t gh_array < <(echo "$gh_branches" | jq -r '.[].name')
   mapfile -t ghes_array < <(echo "$ghes_branches" | jq -r '.[].name')
 
-  write_log "ℹ️  Commit validation limited to first 10 branches"
-
-  # Maps
+  # ----------------------------
+  # Branch validation (FULL)
+  # ----------------------------
   declare -A gh_map
   declare -A ghes_map
 
@@ -204,14 +204,14 @@ validate_migration() {
     [[ -z "${ghes_map[$b]:-}" ]] && missing_in_ghes+=("$b")
   done
 
-  # Branch count
+  # ✅ Branch count (UNCHANGED)
   if [[ ${#ghes_array[@]} -eq ${#gh_array[@]} ]]; then
     write_log "✅ Branch Count MATCHED | GHES=${#ghes_array[@]} GitHub=${#gh_array[@]}"
   else
     write_log "❌ Branch Count NOT MATCHED | GHES=${#ghes_array[@]} GitHub=${#gh_array[@]}"
   fi
 
-  # Missing branches
+  # Missing
   [[ ${#missing_in_github[@]} -gt 0 ]] && \
     write_log "⚠️ Missing in GitHub: ${missing_in_github[*]}" || \
     write_log "✅ No branches missing in GitHub"
@@ -221,14 +221,21 @@ validate_migration() {
     write_log "✅ No extra branches found"
 
   # ----------------------------
-  # Commit validation (FIRST 10 ONLY)
+  # ✅ LIMIT ONLY FOR COMMIT VALIDATION
+  # ----------------------------
+  mapfile -t gh_limited_array < <(printf '%s\n' "${gh_array[@]}" | head -n 10)
+
+  write_log "ℹ️ Commit validation running only for first 10 branches"
+
+  # ----------------------------
+  # Commit validation (LIMITED)
   # ----------------------------
   local branch
   local gh_pair ghes_pair
   local gh_count gh_sha
   local ghes_count ghes_sha
 
-  for branch in "${gh_array[@]}"; do
+  for branch in "${gh_limited_array[@]}"; do
     [[ -z "${ghes_map[$branch]:-}" ]] && continue
 
     gh_pair="$(get_commit_count_and_latest github "$github_org" "$github_repo" "$branch")"
@@ -240,17 +247,19 @@ validate_migration() {
     ghes_count="${ghes_pair%%|*}"
     ghes_sha="${ghes_pair#*|}"
 
-    if [[ "$gh_count" == "$ghes_count" ]]; then
-      write_log "✅ ${branch} | Commit MATCHED | GHES=${ghes_count} GitHub=${gh_count}"
-    else
-      write_log "❌ ${branch} | Commit NOT MATCHED | GHES=${ghes_count} GitHub=${gh_count}"
-    fi
+# ✅ Commit comparison
+  if [[ "$gh_count" == "$ghes_count" ]]; then
+    write_log "Branch '$branch': GHES Commits=$ghes_count | GitHub Commits=$gh_count | ✅ Matching"
+  else
+    write_log "Branch '$branch': GHES Commits=$ghes_count | GitHub Commits=$gh_count | ❌ NOT Matching"
+  fi
 
-    if [[ "$ghes_sha" == "$gh_sha" && -n "$ghes_sha" ]]; then
-      write_log "✅ ${branch} | SHA MATCHED"
-    else
-      write_log "❌ ${branch} | SHA NOT MATCHED"
-    fi
+  # ✅ SHA comparison
+  if [[ "$ghes_sha" == "$gh_sha" && -n "$ghes_sha" ]]; then
+    write_log "Branch '$branch': GHES SHA=$ghes_sha | GitHub SHA=$gh_sha | ✅ Matching"
+  else
+    write_log "Branch '$branch': GHES SHA=$ghes_sha | GitHub SHA=$gh_sha | ❌ NOT Matching"
+  fi
   done
 
   write_log "✅ Validation completed for: ${github_org}/${github_repo}"
